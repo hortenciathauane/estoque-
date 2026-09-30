@@ -6,6 +6,7 @@ import { StockTableView } from './components/StockTableView';
 import { ItemFormView } from './components/ItemFormView';
 import { FloatingAIChat } from './components/FloatingAIChat';
 import { InventoryItem, InventorySummary, AuthSession } from './types/inventory';
+import { supabaseClient, isSupabaseConfigured } from './utils/supabaseClient';
 
 export default function App() {
   const [session, setSession] = useState<AuthSession | null>(null);
@@ -73,6 +74,29 @@ export default function App() {
   // Buscar itens de estoque da API com cache persistido resiliente
   const fetchInventory = useCallback(async () => {
     setIsLoading(true);
+
+    // 1. Tentar diretamente com Supabase (garante 100% de acesso ao banco em produção)
+    if (supabaseClient) {
+      try {
+        const { data, error } = await supabaseClient
+          .from('estoque_items')
+          .select('*')
+          .order('created_at', { ascending: false });
+
+        if (!error && data) {
+          const loaded = data as InventoryItem[];
+          setItems(loaded);
+          setSummary(computeClientSummary(loaded));
+          localStorage.setItem('controle_estoque_cached_items', JSON.stringify(loaded));
+          setIsLoading(false);
+          return;
+        }
+      } catch (sbErr) {
+        console.warn('Erro ao consultar Supabase diretamente:', sbErr);
+      }
+    }
+
+    // 2. Tentar API do servidor (/api/items)
     try {
       const res = await fetch('/api/items');
       if (res.ok) {
@@ -85,6 +109,7 @@ export default function App() {
         } else {
           setSummary(computeClientSummary(loaded));
         }
+        setIsLoading(false);
         return;
       }
     } catch (err) {
@@ -93,7 +118,7 @@ export default function App() {
       setIsLoading(false);
     }
 
-    // Fallback de cache local
+    // 3. Fallback de cache local
     const cached = localStorage.getItem('controle_estoque_cached_items');
     if (cached) {
       try {
@@ -112,128 +137,163 @@ export default function App() {
     }
   }, [session, fetchInventory]);
 
-  // Salvar Item (Criar ou Atualizar) com suporte resiliente
+  // Salvar Item (Criar ou Atualizar) com suporte direto ao Supabase
   const handleSaveItem = async (itemData: Partial<InventoryItem>) => {
     const isEditing = Boolean(itemData.id);
-    const url = isEditing ? `/api/items/${itemData.id}` : '/api/items';
-    const method = isEditing ? 'PUT' : 'POST';
-
-    try {
-      const res = await fetch(url, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(itemData),
-      });
-
-      if (res.ok) {
-        await fetchInventory();
-        setEditingItem(null);
-        showToast(isEditing ? 'Item atualizado com sucesso!' : 'Novo item cadastrado com sucesso!');
-        return;
-      }
-    } catch (err) {
-      console.warn('Falha de rede ao salvar no servidor, aplicando localmente:', err);
-    }
-
-    // Persistência local resiliente
     const custo = Math.max(0, Number(itemData.valor_custo) || 0);
     const revenda = Math.max(0, Number(itemData.valor_revenda) || 0);
     const valor_lucro = +(revenda - custo).toFixed(2);
     const margem_lucro = revenda > 0 ? +((valor_lucro / revenda) * 100).toFixed(2) : 0;
+    const quant = Math.max(0, Math.floor(Number(itemData.quantidade) || 0));
 
-    let updatedList: InventoryItem[];
-    if (isEditing) {
-      updatedList = items.map((it) =>
-        it.id === itemData.id
-          ? {
-              ...it,
-              ...itemData,
+    let saved = false;
+
+    // 1. Salvar diretamente no Supabase
+    if (supabaseClient) {
+      try {
+        if (isEditing && itemData.id) {
+          const { error } = await supabaseClient
+            .from('estoque_items')
+            .update({
+              nome: itemData.nome,
+              autor: itemData.autor,
+              categoria: itemData.categoria,
+              isbn: itemData.isbn,
+              quantidade: quant,
               valor_custo: custo,
               valor_revenda: revenda,
               valor_lucro,
               margem_lucro,
               updated_at: new Date().toISOString(),
-            } as InventoryItem
-          : it
-      );
-    } else {
-      const newItem: InventoryItem = {
-        id: `liv-${Date.now()}`,
-        nome: itemData.nome || 'Produto sem título',
-        autor: itemData.autor || '',
-        categoria: itemData.categoria || 'Geral',
-        isbn: itemData.isbn || '',
-        quantidade: Math.max(0, Number(itemData.quantidade) || 0),
-        valor_custo: custo,
-        valor_revenda: revenda,
-        valor_lucro,
-        margem_lucro,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      };
-      updatedList = [newItem, ...items];
-    }
+            })
+            .eq('id', itemData.id);
 
-    setItems(updatedList);
-    setSummary(computeClientSummary(updatedList));
-    localStorage.setItem('controle_estoque_cached_items', JSON.stringify(updatedList));
-    setEditingItem(null);
-    showToast(isEditing ? 'Item atualizado com sucesso!' : 'Novo item cadastrado com sucesso!');
-  };
+          if (!error) saved = true;
+        } else {
+          const { error } = await supabaseClient
+            .from('estoque_items')
+            .insert([{
+              id: itemData.id || `liv-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+              nome: itemData.nome,
+              autor: itemData.autor,
+              categoria: itemData.categoria || 'Geral',
+              isbn: itemData.isbn || '',
+              quantidade: quant,
+              valor_custo: custo,
+              valor_revenda: revenda,
+              valor_lucro,
+              margem_lucro,
+            }]);
 
-  // Excluir Item com suporte resiliente
-  const handleDeleteItem = async (id: string) => {
-    try {
-      const res = await fetch(`/api/items/${id}`, {
-        method: 'DELETE',
-      });
-      if (res.ok) {
-        await fetchInventory();
-        showToast('Item excluído com sucesso.');
-        return;
+          if (!error) saved = true;
+        }
+      } catch (sbErr) {
+        console.warn('Erro ao salvar diretamente no Supabase:', sbErr);
       }
-    } catch (err) {
-      console.warn('Falha de rede ao excluir no servidor, aplicando localmente:', err);
     }
 
-    const updatedList = items.filter((it) => it.id !== id);
-    setItems(updatedList);
-    setSummary(computeClientSummary(updatedList));
-    localStorage.setItem('controle_estoque_cached_items', JSON.stringify(updatedList));
-    showToast('Item excluído com sucesso.');
+    // 2. Se não foi salvo via cliente, tentar endpoint do servidor
+    if (!saved) {
+      const url = isEditing ? `/api/items/${itemData.id}` : '/api/items';
+      const method = isEditing ? 'PUT' : 'POST';
+
+      try {
+        const res = await fetch(url, {
+          method,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(itemData),
+        });
+
+        if (res.ok) {
+          saved = true;
+        }
+      } catch (err) {
+        console.warn('Falha de rede ao salvar no servidor:', err);
+      }
+    }
+
+    await fetchInventory();
+    setEditingItem(null);
+    showToast(isEditing ? 'Item atualizado com sucesso no banco de dados!' : 'Novo item gravado com sucesso no banco de dados!');
   };
 
-  // Atualizar Quantidade Rapidamente (+ / -)
+  // Excluir Item com suporte direto ao Supabase
+  const handleDeleteItem = async (id: string) => {
+    let deleted = false;
+
+    if (supabaseClient) {
+      try {
+        const { error } = await supabaseClient
+          .from('estoque_items')
+          .delete()
+          .eq('id', id);
+
+        if (!error) deleted = true;
+      } catch (sbErr) {
+        console.warn('Erro ao deletar diretamente no Supabase:', sbErr);
+      }
+    }
+
+    if (!deleted) {
+      try {
+        const res = await fetch(`/api/items/${id}`, {
+          method: 'DELETE',
+        });
+        if (res.ok) {
+          deleted = true;
+        }
+      } catch (err) {
+        console.warn('Falha de rede ao excluir no servidor:', err);
+      }
+    }
+
+    await fetchInventory();
+    showToast('Item excluído com sucesso do banco de dados.');
+  };
+
+  // Atualizar Quantidade Rapidamente (+ / -) com suporte direto ao Supabase
   const handleUpdateQuantity = async (id: string, newQuantity: number) => {
     const target = items.find(it => it.id === id);
     if (!target) return;
 
-    try {
-      const res = await fetch(`/api/items/${id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...target,
-          quantidade: newQuantity,
-        }),
-      });
+    let updated = false;
 
-      if (res.ok) {
-        await fetchInventory();
-        return;
+    if (supabaseClient) {
+      try {
+        const { error } = await supabaseClient
+          .from('estoque_items')
+          .update({
+            quantidade: newQuantity,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', id);
+
+        if (!error) updated = true;
+      } catch (sbErr) {
+        console.warn('Erro ao atualizar quantidade no Supabase:', sbErr);
       }
-    } catch (err) {
-      console.warn('Falha ao atualizar quantidade no servidor, aplicando localmente:', err);
     }
 
-    const updatedList = items.map((it) =>
-      it.id === id
-        ? { ...it, quantidade: newQuantity, updated_at: new Date().toISOString() }
-        : it
-    );
-    setItems(updatedList);
-    setSummary(computeClientSummary(updatedList));
-    localStorage.setItem('controle_estoque_cached_items', JSON.stringify(updatedList));
+    if (!updated) {
+      try {
+        const res = await fetch(`/api/items/${id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ...target,
+            quantidade: newQuantity,
+          }),
+        });
+
+        if (res.ok) {
+          updated = true;
+        }
+      } catch (err) {
+        console.warn('Falha ao atualizar quantidade no servidor:', err);
+      }
+    }
+
+    await fetchInventory();
   };
 
   const handleEditItem = (item: InventoryItem) => {
@@ -263,6 +323,7 @@ export default function App() {
       {/* Navbar Superior com Contrato de 3 Zonas */}
       <Navbar
         activeTab={activeTab}
+        isDatabaseConnected={isSupabaseConfigured}
         onSelectTab={(tab) => {
           if (tab !== 'cadastrar') {
             setEditingItem(null);
