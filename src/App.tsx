@@ -214,7 +214,7 @@ export default function App() {
 
     await fetchInventory();
     setEditingItem(null);
-    showToast(isEditing ? 'Item atualizado com sucesso no banco de dados!' : 'Novo item gravado com sucesso no banco de dados!');
+    showToast(isEditing ? 'Item atualizado com sucesso!' : 'Novo item gravado com sucesso!');
   };
 
   // Excluir Item com suporte direto ao Supabase
@@ -248,7 +248,7 @@ export default function App() {
     }
 
     await fetchInventory();
-    showToast('Item excluído com sucesso do banco de dados.');
+    showToast('Item excluído com sucesso.');
   };
 
   // Atualizar Quantidade Rapidamente (+ / -) com suporte direto ao Supabase
@@ -323,7 +323,6 @@ export default function App() {
       {/* Navbar Superior com Contrato de 3 Zonas */}
       <Navbar
         activeTab={activeTab}
-        isDatabaseConnected={isSupabaseConfigured}
         onSelectTab={(tab) => {
           if (tab !== 'cadastrar') {
             setEditingItem(null);

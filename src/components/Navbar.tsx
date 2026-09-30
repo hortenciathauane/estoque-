@@ -10,7 +10,6 @@ interface NavbarProps {
   onLogout: () => void;
   isChatOpen: boolean;
   onToggleChat: () => void;
-  isDatabaseConnected?: boolean;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -20,7 +19,6 @@ export const Navbar: React.FC<NavbarProps> = ({
   onLogout,
   isChatOpen,
   onToggleChat,
-  isDatabaseConnected = true,
 }) => {
   return (
     <header className="sticky top-0 z-40 bg-[#FAF8F5]/95 backdrop-blur-md border-b border-stone-200">
@@ -94,19 +92,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           </nav>
 
           {/* Zone 3: 1-2 primary actions */}
-          <div className="flex items-center gap-2.5">
-            {isDatabaseConnected ? (
-              <div className="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200/80 text-[11px] font-mono-numbers">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                <span>Supabase Conectado</span>
-              </div>
-            ) : (
-              <div className="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-amber-50 text-amber-800 border border-amber-200/80 text-[11px] font-mono-numbers">
-                <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
-                <span>Modo Local</span>
-              </div>
-            )}
-
+          <div className="flex items-center gap-3">
             <span className="hidden lg:inline text-xs text-stone-500 font-mono-numbers truncate max-w-[180px]">
               {userEmail}
             </span>
