@@ -1,0 +1,6 @@
+{
+  "name": "Controle de Estoque",
+  "description": "Sistema inteligente de controle de estoque para livraria com painel de indicadores, gestão de acervo e assistente Consulte Aqui.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
